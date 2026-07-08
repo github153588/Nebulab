@@ -1693,3 +1693,44 @@ a {
   font-size: 0.82rem;
   text-align: center;
 }
+
+.page-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  pointer-events: none;
+  transition: opacity 500ms ease;
+}
+
+.page-loader.is-ready {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.page-loader-mark {
+  width: min(160px, 40vw);
+  height: auto;
+  animation: pageLoaderPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pageLoaderPulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-loader-mark {
+    animation: none;
+    opacity: 1;
+  }
+}

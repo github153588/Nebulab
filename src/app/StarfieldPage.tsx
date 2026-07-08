@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
+import Image from 'next/image';
 import SiteNav from './SiteNav';
 import ScrollScrubVideo from './ScrollScrubVideo';
 import ImageSlideshow from './ImageSlideshow';
@@ -194,6 +195,7 @@ function getStarSprite(radius: number, hasSpikes: boolean, colorIdx: number) {
 }
 
 export default function StarfieldPage() {
+  const [isReady, setIsReady] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const heroVideoRef = useRef<HTMLVideoElement>(null);
   const mouseTargetRef = useRef({ x: 0.5, y: 0.5 });
@@ -392,12 +394,36 @@ export default function StarfieldPage() {
     starsRef.current = stars;
   }, []);
 
+  // Lock scrolling just long enough for fonts to be in, so text doesn't
+  // reflow/FOUC under the loader — hard-capped by a short timeout raced
+  // against it, so this can never actually get stuck waiting on a resource.
+  useEffect(() => {
+    let cancelled = false;
+    const markReady = () => {
+      if (!cancelled) setIsReady(true);
+    };
+
+    const fontsReady = document.fonts?.ready ?? Promise.resolve();
+    const capped = new Promise<void>((resolve) => setTimeout(resolve, 1800));
+
+    Promise.race([fontsReady, capped]).then(markReady);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Only ever play the hero video while its section is actually on screen —
   // pause it the moment it scrolls out of view instead of burning CPU/battery
   // decoding a video nobody is looking at.
   useEffect(() => {
     const video = heroVideoRef.current;
     if (!video) return;
+
+    // Not in React's video prop types yet, but a real, widely-supported HTML
+    // attribute — keeps this behind fonts/images/JS in the browser's fetch
+    // queue so it doesn't compete for bandwidth with everything else on load.
+    video.setAttribute('fetchpriority', 'low');
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -612,6 +638,10 @@ export default function StarfieldPage() {
 
   return (
     <>
+      <div className={`page-loader${isReady ? ' is-ready' : ''}`} aria-hidden={isReady}>
+        <Image src="/nebulab-logo.png" alt="" width={1317} height={232} className="page-loader-mark" priority />
+      </div>
+
       <canvas ref={canvasRef} className="starfield-canvas" aria-hidden="true" />
 
       <SiteNav />
@@ -625,7 +655,7 @@ export default function StarfieldPage() {
               className="home-mask-image"
               muted
               playsInline
-              preload="auto"
+              preload="metadata"
             >
               <source src="/luna-mask-hero-video.mp4" type="video/mp4" />
             </video>

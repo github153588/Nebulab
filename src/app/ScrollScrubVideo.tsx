@@ -66,7 +66,7 @@ function clamp(value: number) {
 }
 
 function getFramePath(index: number) {
-  return `${FRAME_PATH}${String(index).padStart(4, '0')}.jpg`;
+  return `${FRAME_PATH}${String(index).padStart(4, '0')}.webp`;
 }
 
 export default function ScrollScrubVideo() {
@@ -388,7 +388,7 @@ export default function ScrollScrubVideo() {
       return image;
     });
 
-    // The 180-frame sequence is ~19MB — don't compete with the rest of the
+    // The 180-frame sequence is ~5MB — don't compete with the rest of the
     // page's initial load for bandwidth. Only start fetching once the section
     // is within reach, so a visitor who never scrolls this far never pays for it.
     let framesStarted = false;

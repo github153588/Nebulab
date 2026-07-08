@@ -645,8 +645,8 @@ export default function ScrollScrubVideo() {
           <h2 className="scrub-heading">Every layer engineered to optimize sleep.</h2>
           <p className="scrub-body">
             {isTouchUi
-              ? 'Watch the mask open into the architecture beneath the surface — then tap a hotspot to explore each component, from precision EEG sensors to whisper-quiet haptic drivers.'
-              : 'Scroll to explore the architecture beneath the surface — from precision EEG sensors to whisper-quiet haptic drivers, each component is designed to work in concert while you rest.'}
+              ? 'Watch the mask open into the architecture beneath the surface, then tap a hotspot to explore each component, from precision EEG sensors to whisper-quiet haptic drivers.'
+              : 'Scroll to explore the architecture beneath the surface. From precision EEG sensors to whisper-quiet haptic drivers, each component is designed to work in concert while you rest.'}
           </p>
           <button className="scrub-cta" type="button" onClick={handleLearnMore}>
             Learn More

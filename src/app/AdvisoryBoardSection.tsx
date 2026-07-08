@@ -15,16 +15,16 @@ const ADVISORS: Advisor[] = [
   {
     id: 'mourrain',
     name: 'Philippe Mourrain',
-    position: 'PhD, Stanford University',
+    position: 'Professor of Sleep Psychiatry, Stanford University',
     image: '/advisors/philippe-mourrain.jpg',
     bio: 'Philippe Mourrain is a Stanford professor whose research focuses on the biological mechanisms of sleep, using genetics, neurobiology, and brain imaging to study how sleep affects brain function and development.',
   },
   {
     id: 'zeitzer',
     name: 'Jamie Marc Zeitzer',
-    position: 'PhD, Stanford University',
+    position: 'Professor of Sleep Medicine, Stanford University',
     image: '/advisors/jamie-zeitzer.jpg',
-    bio: 'Jamie Marc Zeitzer is a Stanford sleep and circadian rhythm researcher whose work explores sleep timing, light exposure, wearable sleep tracking, and technology-driven approaches to improving sleep health.',
+    bio: 'Jamie Marc Zeitzer is a Stanford sleep and circadian rhythm professor whose work explores sleep timing, light exposure, wearable sleep tracking, and technology-driven approaches to improving sleep health.',
   },
 ];
 

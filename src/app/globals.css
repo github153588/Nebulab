@@ -1009,6 +1009,17 @@ a {
   transform: translate(-50%, -50%) scale(1);
 }
 
+/* Panels for hotspots near the top of the stage open downward from the
+   hotspot instead of centering on it, so the clipping stage edge
+   (overflow: hidden) can't cut off their upper half. */
+.hotspot-float-panel.opens-down {
+  transform: translate(-50%, 14px) scale(0.94);
+}
+
+.hotspot-float-panel.opens-down.is-active {
+  transform: translate(-50%, 14px) scale(1);
+}
+
 .hotspot-float-panel h3 {
   color: rgba(247, 250, 255, 0.98);
   font-family: var(--font-display);

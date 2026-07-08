@@ -500,7 +500,10 @@ export default function ScrollScrubVideo() {
             maybeStartAutoplay();
           }
         },
-        { threshold: 0.5 },
+        // Only play once the stage is nearly fully in view — at lower
+        // thresholds the animation kicked off while the stage was still
+        // half-hidden at the bottom of the screen.
+        { threshold: 0.9 },
       );
       playObserver.observe(stageRef.current ?? section);
     }
@@ -616,11 +619,16 @@ export default function ScrollScrubVideo() {
               ))}
             </div>
 
+            {/* The stage clips its children (overflow: hidden), so a panel
+                centered on a hotspot near the top edge — like Outer shell at
+                y:12 — would lose its upper half. Those open downward from the
+                hotspot instead, and x is clamped so wide panels can't spill
+                past the side edges. */}
             {displayedHotspot && (
               <div
-                className={`hotspot-float-panel${isPanelVisible ? ' is-active' : ''}`}
+                className={`hotspot-float-panel${isPanelVisible ? ' is-active' : ''}${displayedHotspot.y < 30 ? ' opens-down' : ''}`}
                 style={{
-                  left: `${displayedHotspot.x}%`,
+                  left: `${Math.min(Math.max(displayedHotspot.x, 24), 76)}%`,
                   top: `${displayedHotspot.y}%`,
                 }}
                 aria-live="polite"

@@ -385,14 +385,35 @@ export default function ScrollScrubVideo() {
       const image = new window.Image();
       image.decoding = 'async';
       image.onload = () => handleImageLoad(index);
-      image.src = getFramePath(index + 1);
-
-      if (image.complete && image.naturalWidth > 0) {
-        queueMicrotask(() => handleImageLoad(index));
-      }
-
       return image;
     });
+
+    // The 180-frame sequence is ~19MB — don't compete with the rest of the
+    // page's initial load for bandwidth. Only start fetching once the section
+    // is within reach, so a visitor who never scrolls this far never pays for it.
+    let framesStarted = false;
+    const startLoadingFrames = () => {
+      if (framesStarted) return;
+      framesStarted = true;
+
+      imagesRef.current.forEach((image, index) => {
+        image.src = getFramePath(index + 1);
+        if (image.complete && image.naturalWidth > 0) {
+          queueMicrotask(() => handleImageLoad(index));
+        }
+      });
+    };
+
+    const frameLoadObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          startLoadingFrames();
+          frameLoadObserver.disconnect();
+        }
+      },
+      { rootMargin: '400px 0px' },
+    );
+    frameLoadObserver.observe(section);
 
     explodeToEndRef.current = () => {
       const startProgress = progressRef.current;
@@ -443,6 +464,7 @@ export default function ScrollScrubVideo() {
 
     return () => {
       isDisposed = true;
+      frameLoadObserver.disconnect();
       if (rafRef.current != null) {
         cancelAnimationFrame(rafRef.current);
       }

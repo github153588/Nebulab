@@ -195,6 +195,7 @@ function getStarSprite(radius: number, hasSpikes: boolean, colorIdx: number) {
 
 export default function StarfieldPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const heroVideoRef = useRef<HTMLVideoElement>(null);
   const mouseTargetRef = useRef({ x: 0.5, y: 0.5 });
   const mouseSmoothedRef = useRef({ x: 0.5, y: 0.5 });
   const starsRef = useRef<Star[]>([]);
@@ -389,6 +390,28 @@ export default function StarfieldPage() {
       });
     }
     starsRef.current = stars;
+  }, []);
+
+  // Only ever play the hero video while its section is actually on screen —
+  // pause it the moment it scrolls out of view instead of burning CPU/battery
+  // decoding a video nobody is looking at.
+  useEffect(() => {
+    const video = heroVideoRef.current;
+    if (!video) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      },
+      { threshold: 0.1 },
+    );
+    observer.observe(video);
+
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -598,8 +621,8 @@ export default function StarfieldPage() {
           <div className="home-mask-glow" aria-hidden="true" />
           <div className="home-mask-shell" aria-hidden="true">
             <video
+              ref={heroVideoRef}
               className="home-mask-image"
-              autoPlay
               muted
               playsInline
               preload="auto"

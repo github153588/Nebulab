@@ -71,6 +71,7 @@ function getFramePath(index: number) {
 
 export default function ScrollScrubVideo() {
   const sectionRef = useRef<HTMLElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imagesRef = useRef<HTMLImageElement[]>([]);
   const progressRef = useRef(0);
@@ -79,7 +80,9 @@ export default function ScrollScrubVideo() {
   const frameRef = useRef(1);
   const rafRef = useRef<number | null>(null);
   const explodeRafRef = useRef<number | null>(null);
-  const explodeToEndRef = useRef<() => void>(() => {});
+  const explodeToEndRef = useRef<(duration?: number) => void>(() => {});
+  const isCoarseRef = useRef(false);
+  const [isTouchUi, setIsTouchUi] = useState(false);
   const [isInteractive, setIsInteractive] = useState(false);
   const [hoveredHotspot, setHoveredHotspot] = useState<string | null>(null);
   const [displayedHotspot, setDisplayedHotspot] = useState<(typeof HOTSPOTS)[number] | null>(null);
@@ -110,8 +113,19 @@ export default function ScrollScrubVideo() {
     const context = canvas?.getContext('2d');
     if (!section || !canvas || !context) return;
 
+    // On touch devices, scroll-hijacking (preventDefault + programmatic
+    // scrollTo on every touchmove) fights native momentum scrolling and feels
+    // broken. Phones instead get an autoplay of the sequence when the stage
+    // scrolls into view, and only load every other frame (half the bytes).
+    const isCoarse = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const frameStep = isCoarse ? 2 : 1;
+    isCoarseRef.current = isCoarse;
+    setIsTouchUi(isCoarse);
+
     let isDisposed = false;
     let loadedFrames = 0;
+    let expectedFrames = 0;
     const loadedFrameIndexes = new Set<number>();
 
     const getFrameFromProgress = () => {
@@ -182,7 +196,7 @@ export default function ScrollScrubVideo() {
     };
 
     const resizeCanvas = () => {
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, isCoarse ? 1.5 : 2);
       const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
       const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
 
@@ -379,6 +393,8 @@ export default function ScrollScrubVideo() {
       if (!isDisposed && (loadedFrames === 1 || index + 1 === frameRef.current)) {
         drawFrame(frameRef.current);
       }
+
+      maybeStartAutoplay();
     };
 
     imagesRef.current = Array.from({ length: FRAME_COUNT }, (_, index) => {
@@ -397,6 +413,11 @@ export default function ScrollScrubVideo() {
       framesStarted = true;
 
       imagesRef.current.forEach((image, index) => {
+        // Phones only fetch every other frame (plus the final one) — the
+        // nearest-loaded fallback in drawFrame fills the gaps invisibly.
+        if (index % frameStep !== 0 && index !== FRAME_COUNT - 1) return;
+
+        expectedFrames += 1;
         image.src = getFramePath(index + 1);
         if (image.complete && image.naturalWidth > 0) {
           queueMicrotask(() => handleImageLoad(index));
@@ -415,17 +436,20 @@ export default function ScrollScrubVideo() {
     );
     frameLoadObserver.observe(section);
 
-    explodeToEndRef.current = () => {
+    explodeToEndRef.current = (duration = 900) => {
       const startProgress = progressRef.current;
       const startTime = performance.now();
-      const duration = 900;
 
       if (explodeRafRef.current != null) {
         cancelAnimationFrame(explodeRafRef.current);
       }
 
-      isLockedRef.current = true;
-      pinToSectionTop();
+      // Never pin the page on touch devices — programmatic scrolling mid-
+      // gesture is exactly the jank this component's mobile path avoids.
+      if (!isCoarse) {
+        isLockedRef.current = true;
+        pinToSectionTop();
+      }
 
       const animateToEnd = (timestamp: number) => {
         if (isDisposed) return;
@@ -454,17 +478,55 @@ export default function ScrollScrubVideo() {
       explodeRafRef.current = requestAnimationFrame(animateToEnd);
     };
 
+    // Mobile: instead of scrubbing, play the sequence once the stage is about
+    // half visible — but only after enough frames have arrived that the tween
+    // doesn't stutter through missing images.
+    let autoplayArmed = false;
+    let hasAutoplayed = false;
+    const maybeStartAutoplay = () => {
+      if (!autoplayArmed || hasAutoplayed || isDisposed) return;
+      startLoadingFrames();
+      if (expectedFrames === 0 || loadedFrames < expectedFrames * 0.6) return;
+      hasAutoplayed = true;
+      explodeToEndRef.current(2400);
+    };
+
+    let playObserver: IntersectionObserver | null = null;
+    if (isCoarse && !prefersReducedMotion) {
+      playObserver = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            autoplayArmed = true;
+            maybeStartAutoplay();
+          }
+        },
+        { threshold: 0.5 },
+      );
+      playObserver.observe(stageRef.current ?? section);
+    }
+
+    if (prefersReducedMotion) {
+      // Skip the animation entirely: land on the exploded view with the
+      // hotspots live (via resizeCanvas → syncInteractiveState below). The
+      // fallback <Image> already shows the final frame.
+      progressRef.current = 1;
+      frameRef.current = FRAME_COUNT;
+    }
+
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
-    window.addEventListener('wheel', handleWheel, { passive: false });
-    window.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('keydown', handleKeyDown);
+    if (!isCoarse && !prefersReducedMotion) {
+      window.addEventListener('wheel', handleWheel, { passive: false });
+      window.addEventListener('touchstart', handleTouchStart, { passive: true });
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+      window.addEventListener('scroll', handleScroll, { passive: true });
+      window.addEventListener('keydown', handleKeyDown);
+    }
 
     return () => {
       isDisposed = true;
       frameLoadObserver.disconnect();
+      playObserver?.disconnect();
       if (rafRef.current != null) {
         cancelAnimationFrame(rafRef.current);
       }
@@ -495,7 +557,7 @@ export default function ScrollScrubVideo() {
         aria-label="Scroll-controlled Luna mask exploded view animation"
       >
         <div className="mask-exploded-visual">
-          <div className="mask-exploded-stage">
+          <div className="mask-exploded-stage" ref={stageRef}>
             <NextImage
               className="mask-exploded-fallback"
               src={getFramePath(FRAME_COUNT)}
@@ -513,7 +575,13 @@ export default function ScrollScrubVideo() {
             <div
               className={`mask-hotspot-layer${isInteractive ? ' is-active' : ''}`}
               aria-hidden={!isInteractive}
+              onClick={() => {
+                if (isCoarseRef.current) setHoveredHotspot(null);
+              }}
             >
+              {/* Mouse/focus handlers are ignored on touch devices: taps emulate
+                  mouseenter/focus there, which would fight click-to-toggle and
+                  instantly re-close the panel. */}
               {HOTSPOTS.map((hotspot) => (
                 <button
                   key={hotspot.id}
@@ -525,10 +593,23 @@ export default function ScrollScrubVideo() {
                   }}
                   aria-label={hotspot.title}
                   tabIndex={isInteractive ? 0 : -1}
-                  onMouseEnter={() => setHoveredHotspot(hotspot.id)}
-                  onMouseLeave={() => setHoveredHotspot(null)}
-                  onFocus={() => setHoveredHotspot(hotspot.id)}
-                  onBlur={() => setHoveredHotspot(null)}
+                  onMouseEnter={() => {
+                    if (!isCoarseRef.current) setHoveredHotspot(hotspot.id);
+                  }}
+                  onMouseLeave={() => {
+                    if (!isCoarseRef.current) setHoveredHotspot(null);
+                  }}
+                  onFocus={() => {
+                    if (!isCoarseRef.current) setHoveredHotspot(hotspot.id);
+                  }}
+                  onBlur={() => {
+                    if (!isCoarseRef.current) setHoveredHotspot(null);
+                  }}
+                  onClick={(event) => {
+                    if (!isCoarseRef.current) return;
+                    event.stopPropagation();
+                    setHoveredHotspot((previous) => (previous === hotspot.id ? null : hotspot.id));
+                  }}
                 >
                   <span className="mask-hotspot-label">{hotspot.label}</span>
                 </button>
@@ -555,14 +636,15 @@ export default function ScrollScrubVideo() {
           <p className="scrub-eyebrow">Inside the mask</p>
           <h2 className="scrub-heading">Every layer engineered to optimize sleep.</h2>
           <p className="scrub-body">
-            Scroll to explore the architecture beneath the surface — from precision EEG sensors to whisper-quiet haptic drivers, each component is designed to work in concert while you rest.
+            {isTouchUi
+              ? 'Watch the mask open into the architecture beneath the surface — then tap a hotspot to explore each component, from precision EEG sensors to whisper-quiet haptic drivers.'
+              : 'Scroll to explore the architecture beneath the surface — from precision EEG sensors to whisper-quiet haptic drivers, each component is designed to work in concert while you rest.'}
           </p>
           <button className="scrub-cta" type="button" onClick={handleLearnMore}>
             Learn More
           </button>
         </div>
       </section>
-      <section className="mask-exploded-release-space" aria-hidden="true" />
     </>
   );
 }

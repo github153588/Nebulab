@@ -18,8 +18,8 @@
   --violet: #b7a6ff;
   --green: #9ddfca;
   --rose: #ffb7ca;
-  --font-display: 'Space Grotesk', sans-serif;
-  --font-body: 'Inter', sans-serif;
+  --font-display: var(--font-space-grotesk), 'Space Grotesk', sans-serif;
+  --font-body: var(--font-inter), 'Inter', sans-serif;
 }
 
 html {
@@ -39,6 +39,50 @@ body {
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: #000;
+  transition: opacity 800ms ease;
+}
+
+.splash-screen.is-fading {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.splash-logo {
+  width: min(300px, 56vw);
+  height: auto;
+  animation: splashLogoIn 1200ms ease both;
+}
+
+@keyframes splashLogoIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Active while the splash screen holds: freezes page scroll and keeps the
+   hero entrance animations on their first frame so they play against the
+   splash fade-out instead of finishing unseen behind it. */
+body.splash-hold {
+  overflow: hidden;
+}
+
+body.splash-hold .hero-copy,
+body.splash-hold .home-mask-shell {
+  animation-play-state: paused;
 }
 
 .site-nav {
@@ -672,7 +716,7 @@ a {
   position: relative;
   max-width: 1280px;
   margin: 0 auto;
-  font-family: "SF Pro Display", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "SF Pro Display", var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 6.65rem;
   font-weight: 500;
   line-height: 1.01;
@@ -979,13 +1023,6 @@ a {
   color: rgba(226, 233, 247, 0.72);
   font-size: 0.7rem;
   line-height: 1.38;
-}
-
-.mask-exploded-release-space {
-  min-height: 18svh;
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(28, 36, 58, 0.32), transparent 44%),
-    #000;
 }
 
 .slideshow-section {
@@ -1692,4 +1729,53 @@ a {
   font-weight: 700;
   font-size: 0.82rem;
   text-align: center;
+}
+
+/* ── Touch-device performance overrides ──
+   Phones and tablets pay dearly for effects that are cheap on desktop GPUs:
+   backdrop-filter re-blurs whenever the content behind it animates, infinite
+   background-position animations repaint text on the main thread every frame,
+   and filter chains on a playing <video> re-run per decoded frame. */
+@media (hover: none), (pointer: coarse) {
+  .hero-cta,
+  .mask-hotspot,
+  .hotspot-float-panel,
+  .advisor-photo-back {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  /* More opaque backgrounds stand in for the lost blur */
+  .mask-hotspot {
+    background: rgba(7, 10, 18, 0.92);
+  }
+
+  .hotspot-float-panel {
+    background: rgba(7, 10, 18, 0.96);
+  }
+
+  .advisor-photo-back {
+    background: rgba(20, 22, 30, 0.97);
+  }
+
+  .hero-eyebrow,
+  .slideshow-heading-emphasis {
+    animation: none;
+    background-position: 145% 0;
+  }
+
+  .home-mask-image {
+    filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .hero-eyebrow,
+  .slideshow-heading-emphasis {
+    animation: none;
+  }
 }

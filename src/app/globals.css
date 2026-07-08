@@ -1748,6 +1748,24 @@ a {
   /* More opaque backgrounds stand in for the lost blur */
   .mask-hotspot {
     background: rgba(7, 10, 18, 0.92);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Desktop hides the hovered hotspot so the float panel replaces it, but on
+     touch the tap's emulated hover applies that opacity: 0 — the button
+     vanishes, and Safari's tap heuristic then swallows the first tap as
+     "hover", forcing a second tap to actually click. Keep the resting look. */
+  .mask-hotspot:hover,
+  .mask-hotspot:focus-visible,
+  .mask-hotspot.is-focused {
+    opacity: 0.72;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+
+  /* The exploded view autoplays on touch devices, so the Learn More
+     scrub-to-end button has nothing to do — remove it. */
+  .mask-exploded-copy .scrub-cta {
+    display: none;
   }
 
   .hotspot-float-panel {

@@ -447,10 +447,24 @@ export default function StarfieldPage() {
     const video = heroVideoRef.current;
     if (!video) return;
 
+    // React only sets `muted` as a DOM property during hydration — it never
+    // lands in the server-rendered HTML, so mobile autoplay policies can see
+    // an "unmuted" video and refuse to start it. Set it explicitly before any
+    // play() attempt.
+    video.muted = true;
+    video.defaultMuted = true;
+
+    let isVisible = false;
+
+    const tryPlay = () => {
+      if (isVisible && video.paused) video.play().catch(() => {});
+    };
+
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          video.play().catch(() => {});
+        isVisible = entry.isIntersecting;
+        if (isVisible) {
+          tryPlay();
         } else {
           video.pause();
         }
@@ -459,7 +473,19 @@ export default function StarfieldPage() {
     );
     observer.observe(video);
 
-    return () => observer.disconnect();
+    // iOS blocks even muted autoplay in Low Power Mode until the user
+    // interacts with the page; without these retries the hero stays a blank
+    // rectangle on those phones.
+    video.addEventListener('canplay', tryPlay);
+    window.addEventListener('touchend', tryPlay, { passive: true });
+    window.addEventListener('pointerdown', tryPlay, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      video.removeEventListener('canplay', tryPlay);
+      window.removeEventListener('touchend', tryPlay);
+      window.removeEventListener('pointerdown', tryPlay);
+    };
   }, []);
 
   useEffect(() => {
@@ -764,6 +790,7 @@ export default function StarfieldPage() {
             <video
               ref={heroVideoRef}
               className="home-mask-image"
+              autoPlay
               muted
               playsInline
               preload="auto"

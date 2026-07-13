@@ -22,7 +22,7 @@ export default function WaitlistSection() {
 
         {submitted ? (
           <p className="waitlist-success" role="status">
-            You&apos;re on the list — we&apos;ll be in touch soon.
+            You&apos;re on the list. We&apos;ll be in touch soon.
           </p>
         ) : (
           <form className="waitlist-form" onSubmit={handleSubmit} noValidate>

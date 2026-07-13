@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useState } from 'react';
-import Image from 'next/image';
+import { useEffect, useRef, useCallback } from 'react';
 import SiteNav from './SiteNav';
+import SplashScreen from './SplashScreen';
 import ScrollScrubVideo from './ScrollScrubVideo';
 import ImageSlideshow from './ImageSlideshow';
 import AdvisoryBoardSection from './AdvisoryBoardSection';
@@ -55,6 +55,8 @@ interface Star {
   g: number;
   b: number;
   colorIdx: number;
+  css: string;        // precomputed fill style for the 1px fast path
+  baseAlpha: number;  // twinkle-at-rest alpha, used for statically baked stars
 }
 
 interface NebulaCloud {
@@ -84,11 +86,20 @@ interface DustLane {
 
 /**
  * Pre-render a star sprite onto an offscreen canvas.
- * Produces a soft Airy-disc core + 4-point diffraction spikes.
- * White on transparent — tinted at draw-time via globalCompositeOperation.
+ * Produces a soft Airy-disc core + 4-point diffraction spikes, plus the
+ * halo aura and saturated core glow that used to be rebuilt as radial
+ * gradients on every animation frame — baking them here means the per-frame
+ * cost of a bright star is a single drawImage.
  */
-function createStarSprite(radius: number, hasSpikes: boolean, colorIdx: number): OffscreenCanvas | HTMLCanvasElement {
-  const pad = hasSpikes ? radius * 6 : radius * 4;
+function createStarSprite(
+  radius: number,
+  hasSpikes: boolean,
+  colorIdx: number,
+  auraHalo: number,
+  coreGlowRadius: number,
+): OffscreenCanvas | HTMLCanvasElement {
+  const auraRadius = auraHalo >= 0 ? radius * (2.05 + auraHalo * 0.78) : 0;
+  const pad = Math.max(hasSpikes ? radius * 6 : radius * 4, auraRadius + 2, coreGlowRadius * 1.9 + 2);
   const size = Math.ceil(pad * 2);
   const cx = size / 2;
   const cy = size / 2;
@@ -110,7 +121,19 @@ function createStarSprite(radius: number, hasSpikes: boolean, colorIdx: number):
   const g = clampColor(255 + (color.g - 255) * mix);
   const b = clampColor(255 + (color.b - 255) * mix);
 
-  // ── Diffraction spikes (drawn first, under the core) ──
+  // ── Halo aura (widest, drawn under everything) ──
+  if (auraHalo >= 0) {
+    const auraGrad = sctx.createRadialGradient(cx, cy, 0, cx, cy, auraRadius);
+    auraGrad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.36)`);
+    auraGrad.addColorStop(0.48, `rgba(${r}, ${g}, ${b}, 0.14)`);
+    auraGrad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+    sctx.beginPath();
+    sctx.arc(cx, cy, auraRadius, 0, Math.PI * 2);
+    sctx.fillStyle = auraGrad;
+    sctx.fill();
+  }
+
+  // ── Diffraction spikes (drawn under the core) ──
   if (hasSpikes) {
     const spikeLen = radius * 5;
     const spikeWidth = Math.max(0.4, radius * 0.18);
@@ -176,27 +199,45 @@ function createStarSprite(radius: number, hasSpikes: boolean, colorIdx: number):
   sctx.fillStyle = coreGrad;
   sctx.fill();
 
+  // ── Saturated core glow (topmost, tints the white center) ──
+  if (coreGlowRadius > 0) {
+    const glowR = coreGlowRadius * 1.9;
+    const glowGrad = sctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+    glowGrad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.72)`);
+    glowGrad.addColorStop(0.65, `rgba(${r}, ${g}, ${b}, 0.24)`);
+    glowGrad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+    sctx.beginPath();
+    sctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+    sctx.fillStyle = glowGrad;
+    sctx.fill();
+  }
+
   return spriteCanvas;
 }
 
-// Sprite cache keyed by "size_hasSpikes_colorIdx"
+// Sprite cache keyed by quantized radius/spikes/color/aura/core-glow
 const spriteCache = new Map<string, OffscreenCanvas | HTMLCanvasElement>();
 
-function getStarSprite(radius: number, hasSpikes: boolean, colorIdx: number) {
-  // Quantize radius to nearest 0.5 to limit cache entries
-  const qr = Math.round(radius * 2) / 2;
-  const key = `${qr}_${hasSpikes ? 1 : 0}_${colorIdx}`;
+function getStarSprite(star: Star, renderRadius: number) {
+  // Quantize the continuous inputs to limit cache entries
+  const qr = Math.round(renderRadius * 2) / 2;
+  const hasAura = star.halo > 0.16 || star.size > 0.92;
+  const qAura = hasAura ? Math.round(star.halo * 10) / 10 : -1;
+  const coreGlow = star.halo > 0.035 ? Math.max(0.38, star.size * 0.34) : 0;
+  const qCoreGlow = Math.round(coreGlow * 4) / 4;
+
+  const key = `${qr}_${star.hasSpikes ? 1 : 0}_${star.colorIdx}_${qAura}_${qCoreGlow}`;
   let sprite = spriteCache.get(key);
   if (!sprite) {
-    sprite = createStarSprite(qr, hasSpikes, colorIdx);
+    sprite = createStarSprite(qr, star.hasSpikes, star.colorIdx, qAura, qCoreGlow);
     spriteCache.set(key, sprite);
   }
   return sprite;
 }
 
 export default function StarfieldPage() {
-  const [isReady, setIsReady] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const heroSectionRef = useRef<HTMLElement>(null);
   const heroVideoRef = useRef<HTMLVideoElement>(null);
   const mouseTargetRef = useRef({ x: 0.5, y: 0.5 });
   const mouseSmoothedRef = useRef({ x: 0.5, y: 0.5 });
@@ -206,8 +247,6 @@ export default function StarfieldPage() {
   const rafRef = useRef<number>(0);
 
   const STAR_DENSITY = 0.0027;
-  const MAX_STARS = 6400;
-  const MIN_STARS = 2200;
   const PARALLAX_STRENGTH = 14;
   const MOUSE_LERP = 0.025;
 
@@ -343,9 +382,14 @@ export default function StarfieldPage() {
     dustRef.current = dust;
   }, []);
 
-  const initStars = useCallback((width: number, height: number) => {
+  const initStars = useCallback((width: number, height: number, isMobile: boolean) => {
     const stars: Star[] = [];
-    const starCount = Math.min(MAX_STARS, Math.max(MIN_STARS, Math.round(width * height * STAR_DENSITY)));
+    // Phones get far fewer stars: the old floor of 2200 forced a small screen
+    // to draw more stars than its area warranted, and nobody can tell the
+    // difference past a few hundred on a 6" display.
+    const maxStars = isMobile ? 1200 : 6400;
+    const minStars = isMobile ? 500 : 2200;
+    const starCount = Math.min(maxStars, Math.max(minStars, Math.round(width * height * STAR_DENSITY)));
 
     for (let i = 0; i < starCount; i++) {
       const zRaw = Math.random();
@@ -388,29 +432,12 @@ export default function StarfieldPage() {
         twinkleSpeed, twinklePhase, twinkleDepth,
         spikeAngle: Math.random() * Math.PI * 0.5, // random 0-90° rotation
         hasSpikes: magnitude > 0.78 && Math.random() < 0.12,
-        r, g, b, colorIdx
+        r, g, b, colorIdx,
+        css: `rgb(${r}, ${g}, ${b})`,
+        baseAlpha: brightness * (1 - twinkleDepth * 0.5),
       });
     }
     starsRef.current = stars;
-  }, []);
-
-  // Lock scrolling just long enough for fonts to be in, so text doesn't
-  // reflow/FOUC under the loader — hard-capped by a short timeout raced
-  // against it, so this can never actually get stuck waiting on a resource.
-  useEffect(() => {
-    let cancelled = false;
-    const markReady = () => {
-      if (!cancelled) setIsReady(true);
-    };
-
-    const fontsReady = document.fonts?.ready ?? Promise.resolve();
-    const capped = new Promise<void>((resolve) => setTimeout(resolve, 1800));
-
-    Promise.race([fontsReady, capped]).then(markReady);
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // Only ever play the hero video while its section is actually on screen —
@@ -420,15 +447,24 @@ export default function StarfieldPage() {
     const video = heroVideoRef.current;
     if (!video) return;
 
-    // Not in React's video prop types yet, but a real, widely-supported HTML
-    // attribute — keeps this behind fonts/images/JS in the browser's fetch
-    // queue so it doesn't compete for bandwidth with everything else on load.
-    video.setAttribute('fetchpriority', 'low');
+    // React only sets `muted` as a DOM property during hydration — it never
+    // lands in the server-rendered HTML, so mobile autoplay policies can see
+    // an "unmuted" video and refuse to start it. Set it explicitly before any
+    // play() attempt.
+    video.muted = true;
+    video.defaultMuted = true;
+
+    let isVisible = false;
+
+    const tryPlay = () => {
+      if (isVisible && video.paused) video.play().catch(() => {});
+    };
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          video.play().catch(() => {});
+        isVisible = entry.isIntersecting;
+        if (isVisible) {
+          tryPlay();
         } else {
           video.pause();
         }
@@ -437,7 +473,19 @@ export default function StarfieldPage() {
     );
     observer.observe(video);
 
-    return () => observer.disconnect();
+    // iOS blocks even muted autoplay in Low Power Mode until the user
+    // interacts with the page; without these retries the hero stays a blank
+    // rectangle on those phones.
+    video.addEventListener('canplay', tryPlay);
+    window.addEventListener('touchend', tryPlay, { passive: true });
+    window.addEventListener('pointerdown', tryPlay, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      video.removeEventListener('canplay', tryPlay);
+      window.removeEventListener('touchend', tryPlay);
+      window.removeEventListener('pointerdown', tryPlay);
+    };
   }, []);
 
   useEffect(() => {
@@ -446,18 +494,208 @@ export default function StarfieldPage() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const isMobile = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const TWINKLER_COUNT = 80;
+
     let dpr = 1;
+    let viewW = 0;
+    let viewH = 0;
+    let bgLayer: HTMLCanvasElement | null = null;
+    let starLayer: HTMLCanvasElement | null = null;
+    let twinklers: Star[] = [];
+
+    const makeLayer = () => {
+      const layer = document.createElement('canvas');
+      layer.width = Math.max(1, Math.round(viewW * dpr));
+      layer.height = Math.max(1, Math.round(viewH * dpr));
+      return layer;
+    };
+
+    // The sky gradient, nebula clouds and dust lanes barely move (mouse
+    // parallax shifts them ~2px at most), so render them once per resize and
+    // blit a single image per frame instead of rebuilding a dozen full-screen
+    // radial gradients every 16ms.
+    const buildBgLayer = () => {
+      bgLayer = makeLayer();
+      const bctx = bgLayer.getContext('2d');
+      if (!bctx) {
+        bgLayer = null;
+        return;
+      }
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const w = viewW;
+      const h = viewH;
+
+      const skyGrad = bctx.createRadialGradient(
+        w * 0.52, h * 0.42, 0,
+        w * 0.52, h * 0.42, Math.max(w, h) * 0.85,
+      );
+      skyGrad.addColorStop(0, 'rgba(11, 14, 26, 0.2)');
+      skyGrad.addColorStop(0.55, 'rgba(4, 5, 12, 0.16)');
+      skyGrad.addColorStop(1, 'rgba(0, 0, 0, 0.02)');
+      bctx.fillStyle = skyGrad;
+      bctx.fillRect(0, 0, w, h);
+
+      bctx.globalCompositeOperation = 'screen';
+      for (const cloud of nebulaRef.current) {
+        const grad = bctx.createRadialGradient(0, 0, 0, 0, 0, cloud.radius);
+        grad.addColorStop(0, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, ${cloud.alpha})`);
+        grad.addColorStop(0.34, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, ${cloud.alpha * 0.68})`);
+        grad.addColorStop(0.72, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, ${cloud.alpha * 0.22})`);
+        grad.addColorStop(1, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, 0)`);
+
+        bctx.save();
+        bctx.translate(cloud.x, cloud.y);
+        bctx.rotate(cloud.rotation);
+        bctx.scale(cloud.stretchX, cloud.stretchY);
+        bctx.fillStyle = grad;
+        bctx.beginPath();
+        bctx.arc(0, 0, cloud.radius, 0, Math.PI * 2);
+        bctx.fill();
+        bctx.restore();
+      }
+      bctx.globalCompositeOperation = 'source-over';
+
+      for (const dust of dustRef.current) {
+        const grad = bctx.createRadialGradient(0, 0, 0, 0, 0, dust.radius);
+        grad.addColorStop(0, `rgba(0, 0, 0, ${dust.alpha})`);
+        grad.addColorStop(0.46, `rgba(0, 0, 0, ${dust.alpha * 0.74})`);
+        grad.addColorStop(0.78, `rgba(0, 0, 0, ${dust.alpha * 0.28})`);
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+        bctx.save();
+        bctx.translate(dust.x, dust.y);
+        bctx.rotate(dust.rotation);
+        bctx.scale(dust.stretchX, dust.stretchY);
+        bctx.fillStyle = grad;
+        bctx.beginPath();
+        bctx.arc(0, 0, dust.radius, 0, Math.PI * 2);
+        bctx.fill();
+        bctx.restore();
+      }
+    };
+
+    const drawStar = (
+      target: CanvasRenderingContext2D,
+      star: Star,
+      x: number,
+      y: number,
+      alpha: number,
+    ) => {
+      if (star.size < 0.58 && star.halo < 0.035) {
+        target.globalAlpha = Math.max(0.26, Math.min(1, alpha * 1.26));
+        target.fillStyle = star.css;
+        target.fillRect(x, y, 1, 1);
+        return;
+      }
+
+      // Real astrophoto stars are mostly sharp points; keep bloom rare and tight.
+      const renderRadius = Math.max(0.65, star.size * (0.82 + star.halo * 0.7));
+      const sprite = getStarSprite(star, renderRadius);
+      target.globalAlpha = Math.max(0, Math.min(1, alpha * 1.24));
+
+      if (star.hasSpikes) {
+        target.save();
+        target.translate(x, y);
+        target.rotate(star.spikeAngle);
+        target.drawImage(sprite as HTMLCanvasElement, -sprite.width / 2, -sprite.height / 2);
+        target.restore();
+      } else {
+        target.drawImage(sprite as HTMLCanvasElement, x - sprite.width / 2, y - sprite.height / 2);
+      }
+    };
+
+    // Touch devices have no mouse parallax, so star positions never change —
+    // twinkle is the only motion. Bake every star except the handful with the
+    // most visible twinkle into a static layer and animate only those few.
+    const buildStarLayer = () => {
+      const stars = starsRef.current;
+      const ranked = [...stars].sort(
+        (a, b) => b.brightness * b.twinkleDepth - a.brightness * a.twinkleDepth,
+      );
+      twinklers = ranked.slice(0, TWINKLER_COUNT);
+      const twinkSet = new Set(twinklers);
+
+      starLayer = makeLayer();
+      const sctx = starLayer.getContext('2d');
+      if (!sctx) {
+        starLayer = null;
+        return;
+      }
+      sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      sctx.globalCompositeOperation = 'lighter';
+      for (const star of stars) {
+        if (twinkSet.has(star)) continue;
+        drawStar(sctx, star, star.ox, star.oy, star.baseAlpha);
+      }
+    };
+
+    const drawScene = (time: number) => {
+      const w = viewW;
+      const h = viewH;
+      ctx.clearRect(0, 0, w, h);
+
+      const sm = mouseSmoothedRef.current;
+      const mx = (sm.x - 0.5) * 2;
+      const my = (sm.y - 0.5) * 2;
+
+      if (bgLayer) {
+        ctx.drawImage(bgLayer, -mx * PARALLAX_STRENGTH * 0.13, -my * PARALLAX_STRENGTH * 0.09, w, h);
+      }
+
+      ctx.globalCompositeOperation = 'lighter'; // Makes overlapping colors pop and saturates strongly
+
+      if (isMobile) {
+        if (starLayer) ctx.drawImage(starLayer, 0, 0, w, h);
+        for (const star of twinklers) {
+          const twinkle = Math.sin(time * star.twinkleSpeed + star.twinklePhase);
+          const alpha = star.brightness * (1 - star.twinkleDepth * 0.5 + star.twinkleDepth * twinkle);
+          drawStar(ctx, star, star.ox, star.oy, alpha);
+        }
+      } else {
+        for (const star of starsRef.current) {
+          const px = star.ox - mx * PARALLAX_STRENGTH * star.z;
+          const py = star.oy - my * PARALLAX_STRENGTH * star.z;
+
+          const twinkle = Math.sin(time * star.twinkleSpeed + star.twinklePhase);
+          const alpha = star.brightness * (1 - star.twinkleDepth * 0.5 + star.twinkleDepth * twinkle);
+
+          const drawX = ((px % (w + 80)) + (w + 80)) % (w + 80) - 40;
+          const drawY = ((py % (h + 80)) + (h + 80)) % (h + 80) - 40;
+
+          drawStar(ctx, star, drawX, drawY, alpha);
+        }
+      }
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+    };
+
+    let lastTime = 0;
 
     const resize = () => {
-      dpr = window.devicePixelRatio || 1;
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      canvas.style.width = `${window.innerWidth}px`;
-      canvas.style.height = `${window.innerHeight}px`;
+      // The canvas is CSS-sized (100vw/100vh, which tracks the *large*
+      // viewport), so mobile URL-bar show/hide fires resize events without
+      // changing the canvas box — skip those instead of regenerating and
+      // visibly reshuffling the whole sky mid-scroll.
+      const nextW = canvas.clientWidth || window.innerWidth;
+      const nextH = canvas.clientHeight || window.innerHeight;
+      const nextDpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+      if (nextW === viewW && nextH === viewH && nextDpr === dpr) return;
+
+      viewW = nextW;
+      viewH = nextH;
+      dpr = nextDpr;
+      canvas.width = Math.round(viewW * dpr);
+      canvas.height = Math.round(viewH * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      spriteCache.clear(); // re-create sprites for new DPR
-      initNebula(window.innerWidth, window.innerHeight);
-      initStars(window.innerWidth, window.innerHeight);
+      spriteCache.clear();
+      initNebula(viewW, viewH);
+      initStars(viewW, viewH, isMobile);
+      buildBgLayer();
+      if (isMobile) buildStarLayer();
+      drawScene(lastTime / 1000);
     };
 
     resize();
@@ -469,193 +707,93 @@ export default function StarfieldPage() {
         y: e.clientY / window.innerHeight,
       };
     };
-    window.addEventListener('mousemove', handleMouseMove);
+    if (!isMobile) window.addEventListener('mousemove', handleMouseMove);
 
-    let time = 0;
+    let running = false;
+    // Phones render the starfield at 30fps — plenty for a slow twinkle, and
+    // it halves the canvas work competing with scrolling.
+    const frameBudget = isMobile ? 1000 / 30 - 2 : 0;
+    let lastDraw = -Infinity;
 
-    const animate = () => {
-      time += 0.016;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-
-      const sm = mouseSmoothedRef.current;
-      const tgt = mouseTargetRef.current;
-      sm.x += (tgt.x - sm.x) * MOUSE_LERP;
-      sm.y += (tgt.y - sm.y) * MOUSE_LERP;
-
-      ctx.clearRect(0, 0, w, h);
-
-      const mx = (sm.x - 0.5) * 2;
-      const my = (sm.y - 0.5) * 2;
-
-      const skyGrad = ctx.createRadialGradient(
-        w * 0.52, h * 0.42, 0,
-        w * 0.52, h * 0.42, Math.max(w, h) * 0.85,
-      );
-      skyGrad.addColorStop(0, 'rgba(11, 14, 26, 0.2)');
-      skyGrad.addColorStop(0.55, 'rgba(4, 5, 12, 0.16)');
-      skyGrad.addColorStop(1, 'rgba(0, 0, 0, 0.02)');
-      ctx.fillStyle = skyGrad;
-      ctx.fillRect(0, 0, w, h);
-
-      ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      for (const cloud of nebulaRef.current) {
-        const cloudX = cloud.x - mx * PARALLAX_STRENGTH * 0.16;
-        const cloudY = cloud.y - my * PARALLAX_STRENGTH * 0.1;
-        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, cloud.radius);
-
-        grad.addColorStop(0, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, ${cloud.alpha})`);
-        grad.addColorStop(0.34, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, ${cloud.alpha * 0.68})`);
-        grad.addColorStop(0.72, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, ${cloud.alpha * 0.22})`);
-        grad.addColorStop(1, `rgba(${cloud.color.r}, ${cloud.color.g}, ${cloud.color.b}, 0)`);
-
-        ctx.save();
-        ctx.translate(cloudX, cloudY);
-        ctx.rotate(cloud.rotation);
-        ctx.scale(cloud.stretchX, cloud.stretchY);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(0, 0, cloud.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.restore();
-
-      ctx.save();
-      for (const dust of dustRef.current) {
-        const dustX = dust.x - mx * PARALLAX_STRENGTH * 0.1;
-        const dustY = dust.y - my * PARALLAX_STRENGTH * 0.07;
-        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, dust.radius);
-
-        grad.addColorStop(0, `rgba(0, 0, 0, ${dust.alpha})`);
-        grad.addColorStop(0.46, `rgba(0, 0, 0, ${dust.alpha * 0.74})`);
-        grad.addColorStop(0.78, `rgba(0, 0, 0, ${dust.alpha * 0.28})`);
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-
-        ctx.save();
-        ctx.translate(dustX, dustY);
-        ctx.rotate(dust.rotation);
-        ctx.scale(dust.stretchX, dust.stretchY);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(0, 0, dust.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-      ctx.restore();
-
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter'; // Makes overlapping colors pop and saturates strongly
-      for (const star of starsRef.current) {
-        const px = star.ox - mx * PARALLAX_STRENGTH * star.z;
-        const py = star.oy - my * PARALLAX_STRENGTH * star.z;
-
-        const twinkle = Math.sin(time * star.twinkleSpeed + star.twinklePhase);
-        const alpha = star.brightness * (1 - star.twinkleDepth * 0.5 + star.twinkleDepth * twinkle);
-
-        const drawX = ((px % (w + 80)) + (w + 80)) % (w + 80) - 40;
-        const drawY = ((py % (h + 80)) + (h + 80)) % (h + 80) - 40;
-
-        if (star.size < 0.58 && star.halo < 0.035) {
-          ctx.save();
-          ctx.globalAlpha = Math.max(0.26, Math.min(1, alpha * 1.26));
-          ctx.fillStyle = `rgb(${star.r}, ${star.g}, ${star.b})`;
-          ctx.fillRect(drawX, drawY, 1, 1);
-          ctx.restore();
-          continue;
-        }
-
-        // Real astrophoto stars are mostly sharp points; keep bloom rare and tight.
-        const renderRadius = Math.max(0.65, star.size * (0.82 + star.halo * 0.7));
-        const sprite = getStarSprite(renderRadius, star.hasSpikes, star.colorIdx);
-
-        const spriteW = sprite.width;
-        const spriteH = sprite.height;
-
-        ctx.save();
-        ctx.globalAlpha = Math.max(0, Math.min(1, alpha * 1.24));
-
-        ctx.translate(drawX, drawY);
-        ctx.rotate(star.spikeAngle);
-
-        if (star.halo > 0.16 || star.size > 0.92) {
-          const auraRadius = renderRadius * (2.05 + star.halo * 0.78);
-          const auraGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, auraRadius);
-          auraGrad.addColorStop(0, `rgba(${star.r}, ${star.g}, ${star.b}, 0.36)`);
-          auraGrad.addColorStop(0.48, `rgba(${star.r}, ${star.g}, ${star.b}, 0.14)`);
-          auraGrad.addColorStop(1, `rgba(${star.r}, ${star.g}, ${star.b}, 0)`);
-          ctx.fillStyle = auraGrad;
-          ctx.beginPath();
-          ctx.arc(0, 0, auraRadius, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Draw white sprite
-        ctx.drawImage(
-          sprite as HTMLCanvasElement,
-          -spriteW / 2, -spriteH / 2,
-          spriteW, spriteH,
-        );
-
-        if (star.halo > 0.035) {
-          const coreRadius = Math.max(0.38, star.size * 0.34);
-          const coreGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreRadius * 1.9);
-          coreGrad.addColorStop(0, `rgba(${star.r}, ${star.g}, ${star.b}, 0.72)`);
-          coreGrad.addColorStop(0.65, `rgba(${star.r}, ${star.g}, ${star.b}, 0.24)`);
-          coreGrad.addColorStop(1, `rgba(${star.r}, ${star.g}, ${star.b}, 0)`);
-          ctx.fillStyle = coreGrad;
-          ctx.beginPath();
-          ctx.arc(0, 0, coreRadius * 1.9, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        ctx.restore();
-      }
-      ctx.restore(); // Restore from 'lighter' globalCompositeOperation
-      // Very subtle ambient glow near cursor
-      const vignetteGrad = ctx.createRadialGradient(
-        sm.x * w, sm.y * h, 0,
-        sm.x * w, sm.y * h, w * 0.4,
-      );
-      vignetteGrad.addColorStop(0, 'rgba(100, 110, 180, 0.01)');
-      vignetteGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = vignetteGrad;
-      ctx.fillRect(0, 0, w, h);
-
+    const animate = (ts: number) => {
+      if (!running) return;
       rafRef.current = requestAnimationFrame(animate);
+      if (ts - lastDraw < frameBudget) return;
+      lastDraw = ts;
+      lastTime = ts;
+
+      if (!isMobile) {
+        const sm = mouseSmoothedRef.current;
+        const tgt = mouseTargetRef.current;
+        sm.x += (tgt.x - sm.x) * MOUSE_LERP;
+        sm.y += (tgt.y - sm.y) * MOUSE_LERP;
+      }
+
+      drawScene(ts / 1000);
     };
 
-    rafRef.current = requestAnimationFrame(animate);
+    const startLoop = () => {
+      if (running || prefersReducedMotion) return;
+      running = true;
+      rafRef.current = requestAnimationFrame(animate);
+    };
+    const stopLoop = () => {
+      running = false;
+      cancelAnimationFrame(rafRef.current);
+    };
+
+    // The starfield only shows through the hero (top) and waitlist (bottom)
+    // sections — everything between them sits on solid black, fully covering
+    // the canvas. While neither is on screen a frozen frame is
+    // indistinguishable, so stop the loop entirely instead of repainting a
+    // full-viewport canvas per frame through the whole middle of the page.
+    const visibleSections = new Set<Element>();
+    let visibilityObserver: IntersectionObserver | null = null;
+    const starfieldSections = [heroSectionRef.current, document.getElementById('waitlist')]
+      .filter((el): el is HTMLElement => el !== null);
+    if (!prefersReducedMotion && starfieldSections.length > 0) {
+      visibilityObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) visibleSections.add(entry.target);
+            else visibleSections.delete(entry.target);
+          }
+          if (visibleSections.size > 0) startLoop();
+          else stopLoop();
+        },
+        { rootMargin: '25% 0px' },
+      );
+      starfieldSections.forEach((el) => visibilityObserver?.observe(el));
+    }
+
+    startLoop();
 
     return () => {
       window.removeEventListener('resize', resize);
       window.removeEventListener('mousemove', handleMouseMove);
-      cancelAnimationFrame(rafRef.current);
+      visibilityObserver?.disconnect();
+      stopLoop();
     };
   }, [initNebula, initStars]);
 
   return (
     <>
-      <div className={`page-loader${isReady ? ' is-ready' : ''}`} aria-hidden={isReady}>
-        <Image src="/nebulab-logo.png" alt="" width={1317} height={232} className="page-loader-mark" priority />
-      </div>
-
+      <SplashScreen />
       <canvas ref={canvasRef} className="starfield-canvas" aria-hidden="true" />
 
       <SiteNav />
 
       <main className="page-container home-starfield">
-        <section className="home-starfield-hero" id="hero">
+        <section className="home-starfield-hero" id="hero" ref={heroSectionRef}>
           <div className="home-mask-glow" aria-hidden="true" />
           <div className="home-mask-shell" aria-hidden="true">
             <video
               ref={heroVideoRef}
               className="home-mask-image"
+              autoPlay
               muted
               playsInline
-              preload="metadata"
+              preload="auto"
             >
               <source src="/luna-mask-hero-video.mp4" type="video/mp4" />
             </video>

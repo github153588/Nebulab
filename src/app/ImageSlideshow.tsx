@@ -6,19 +6,19 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 const SLIDES = [
   {
     id: 'wake-better',
-    image: '/slideshow-wake-better.png',
+    image: '/slideshow-wake-better.webp',
     title: 'Wake Better',
     description: 'The right start changes everything. NebuLab detects your sleep stage in real time and wakes you at the perfect moment, so you open your eyes clear, not groggy.',
   },
   {
     id: 'sleep-deeper',
-    image: '/slideshow-sleep-deeper.png',
+    image: '/slideshow-sleep-deeper.webp',
     title: 'Sleep Deeper',
     description: "Recovery happens while you sleep. NebuLab's closed-loop feedback extends your restorative stages, so you wake up with the energy to match your day.",
   },
   {
     id: 'see-further',
-    image: '/slideshow-see-further.png',
+    image: '/slideshow-see-further.webp',
     title: 'See Further',
     description: "Your nights hold patterns your days never show. We're building toward biomarker research that links your nightly rhythms to long-term health signals.",
   },

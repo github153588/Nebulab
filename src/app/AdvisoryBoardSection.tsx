@@ -26,6 +26,13 @@ const ADVISORS: Advisor[] = [
     image: '/advisors/jamie-zeitzer.jpg',
     bio: 'Jamie Marc Zeitzer is a Stanford sleep and circadian rhythm professor whose work explores sleep timing, light exposure, wearable sleep tracking, and technology-driven approaches to improving sleep health.',
   },
+  {
+    id: 'miglis',
+    name: 'Mitchell Miglis',
+    position: 'Neurologist and Sleep Medicine Specialist, Stanford University',
+    image: '/advisors/mitchell-miglis.jpg',
+    bio: 'Dr. Mitchell Miglis is a Stanford neurologist and sleep medicine specialist researching the intersection of autonomic function and sleep. His work focuses on autonomic dysfunction in Long COVID and central hypersomnias, particularly idiopathic hypersomnia.',
+  },
 ];
 
 function AdvisorCard({ advisor }: { advisor: Advisor }) {

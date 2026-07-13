@@ -1628,19 +1628,30 @@ a {
   position: relative;
   z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
   gap: clamp(48px, 10vw, 112px);
-  max-width: 980px;
+  max-width: 100%;
   margin: 0 auto;
+  padding: 4px clamp(20px, 5vw, 56px) 24px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.advisory-grid::-webkit-scrollbar {
+  display: none;
 }
 
 .advisor-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: min(360px, 100%);
+  flex: 0 0 auto;
+  width: min(360px, 80vw);
   text-align: center;
+  scroll-snap-align: center;
 }
 
 .advisor-photo-flip {

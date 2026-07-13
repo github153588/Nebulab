@@ -984,7 +984,8 @@ a {
 .mask-exploded-release-space {
   min-height: 18svh;
   background:
-    radial-gradient(ellipse at 50% 0%, rgba(28, 36, 58, 0.32), transparent 44%),
+    radial-gradient(ellipse at 50% 0%, rgba(28, 36, 58, 0.36), transparent 70%),
+    radial-gradient(ellipse at 50% 100%, rgba(136, 200, 255, 0.08), transparent 60%),
     #000;
 }
 
@@ -1358,6 +1359,10 @@ a {
     padding: 42px 24px 56px;
   }
 
+  .mask-exploded-copy .scrub-cta {
+    display: none;
+  }
+
   .slideshow-title,
   .slideshow-description {
     max-width: 100%;
@@ -1541,7 +1546,7 @@ a {
 
 .advisory-glow {
   position: absolute;
-  top: -20%;
+  top: -6%;
   left: 50%;
   z-index: 0;
   width: min(1100px, 140vw);

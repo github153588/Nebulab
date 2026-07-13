@@ -110,6 +110,20 @@ export default function ScrollScrubVideo() {
     const context = canvas?.getContext('2d');
     if (!section || !canvas || !context) return;
 
+    const isMobile = window.matchMedia('(max-width: 760px)').matches;
+
+    if (isMobile) {
+      // Scroll-jacking a swipe gesture reads as broken on touch devices, and
+      // the long scrub distance meant a lot of scrolling before mobile users
+      // ever saw the payoff. Skip the scrub entirely and land straight on the
+      // exploded view with hotspots — the NextImage fallback underneath the
+      // (now unused) canvas already renders the final frame.
+      progressRef.current = 1;
+      frameRef.current = FRAME_COUNT;
+      setIsInteractive(true);
+      return;
+    }
+
     let isDisposed = false;
     let loadedFrames = 0;
     const loadedFrameIndexes = new Set<number>();
@@ -555,7 +569,7 @@ export default function ScrollScrubVideo() {
           <p className="scrub-eyebrow">Inside the mask</p>
           <h2 className="scrub-heading">Every layer engineered to optimize sleep.</h2>
           <p className="scrub-body">
-            Scroll to explore the architecture beneath the surface — from precision EEG sensors to whisper-quiet haptic drivers, each component is designed to work in concert while you rest.
+            Explore the architecture beneath the surface — from precision EEG sensors to whisper-quiet haptic drivers, each component is designed to work in concert while you rest.
           </p>
           <button className="scrub-cta" type="button" onClick={handleLearnMore}>
             Learn More
